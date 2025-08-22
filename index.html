@@ -144,7 +144,7 @@
 
         async function updateRates() {
             try {
-                const res = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+                const res = await fetch('https://open.er-api.com/v6/latest/USD');
                 const data = await res.json();
                 document.getElementById('usdhkd').textContent = data.rates.HKD.toFixed(4);
             } catch {
@@ -189,7 +189,7 @@
         setInterval(updateTimers, 1000);
 
         updateRates();
-        setInterval(updateRates, 300000); // every 5 minutes
+        setInterval(updateRates, 3600000); // every 1 hour
     </script>
 </body>
 </html>
