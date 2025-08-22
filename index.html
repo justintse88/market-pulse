@@ -66,16 +66,16 @@
             tz: 'America/New_York',
             openTime: '09:30',
             closeTime: '16:00',
-            holidays: ['2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18', '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01', '2025-11-27', '2025-12-25'],
-            earlyCloses: { '2025-07-03': '13:00', '2025-11-28': '13:00', '2025-12-24': '13:00' }
+            holidays: [],
+            earlyCloses: {}
         };
 
         const lseConfig = {
             tz: 'Europe/London',
             openTime: '08:00',
             closeTime: '16:30',
-            holidays: ['2025-01-01', '2025-04-18', '2025-04-21', '2025-05-05', '2025-05-26', '2025-08-25', '2025-12-25', '2025-12-26'],
-            earlyCloses: { '2025-12-24': '12:30', '2025-12-31': '12:30' }
+            holidays: [],
+            earlyCloses: {}
         };
 
         function isHoliday(date, holidays) {
@@ -142,6 +142,108 @@
             }
         }
 
+        function getEaster(year) {
+            const a = year % 19;
+            const b = Math.floor(year / 100);
+            const c = year % 100;
+            const d = Math.floor(b / 4);
+            const e = b % 4;
+            const f = Math.floor((b + 8) / 25);
+            const g = Math.floor((b - f + 1) / 3);
+            const h = (19 * a + b - d - g + 15) % 30;
+            const i = Math.floor(c / 4);
+            const k = c % 4;
+            const l = (32 + 2 * e + 2 * i - h - k) % 7;
+            const m = Math.floor((a + 11 * h + 22 * l) / 451);
+            const month = Math.floor((h + l - 7 * m + 114) / 31);
+            const day = ((h + l - 7 * m + 114) % 31) + 1;
+            return moment([year, month - 1, day]);
+        }
+
+        function observeDate(date) {
+            let d = moment(date);
+            const wd = d.isoWeekday();
+            if (wd === 6) d.subtract(1, 'day');
+            if (wd === 7) d.add(1, 'day');
+            return d.format('YYYY-MM-DD');
+        }
+
+        function getNthWeekday(year, month, weekday, n) {
+            let date = moment([year, month - 1, 1]);
+            while (date.isoWeekday() !== weekday) {
+                date.add(1, 'day');
+            }
+            date.add(n - 1, 'weeks');
+            return date.format('YYYY-MM-DD');
+        }
+
+        function getLastWeekday(year, month, weekday) {
+            let date = moment([year, month - 1]).endOf('month');
+            while (date.isoWeekday() !== weekday) {
+                date.subtract(1, 'day');
+            }
+            return date.format('YYYY-MM-DD');
+        }
+
+        function calculateHolidays(year) {
+            const easter = getEaster(year);
+            const goodFriday = easter.clone().subtract(2, 'days').format('YYYY-MM-DD');
+            const easterMonday = easter.clone().add(1, 'day').format('YYYY-MM-DD');
+
+            // NYSE Holidays
+            nyseConfig.holidays = [
+                observeDate(moment([year, 0, 1])), // New Year's
+                getNthWeekday(year, 1, 1, 3), // MLK, Monday=1
+                getNthWeekday(year, 2, 1, 3), // Presidents
+                goodFriday,
+                getLastWeekday(year, 5, 1), // Memorial
+                observeDate(moment([year, 5, 19])), // Juneteenth
+                observeDate(moment([year, 6, 4])), // Independence
+                getNthWeekday(year, 9, 1, 1), // Labor
+                getNthWeekday(year, 11, 4, 4), // Thanksgiving, Thursday=4
+                observeDate(moment([year, 11, 25])) // Christmas
+            ];
+
+            const independence = moment([year, 6, 4]);
+            const independenceEve = independence.clone().subtract(1, 'day');
+            if (!isWeekend(independenceEve)) {
+                nyseConfig.earlyCloses[independenceEve.format('YYYY-MM-DD')] = '13:00';
+            }
+
+            const thanksgiving = moment(nyseConfig.holidays.find(h => h.startsWith(year + '-11')));
+            const blackFriday = moment(thanksgiving).add(1, 'day');
+            if (!isWeekend(blackFriday)) {
+                nyseConfig.earlyCloses[blackFriday.format('YYYY-MM-DD')] = '13:00';
+            }
+
+            const christmas = moment([year, 11, 25]);
+            const christmasEve = christmas.clone().subtract(1, 'day');
+            if (!isWeekend(christmasEve)) {
+                nyseConfig.earlyCloses[christmasEve.format('YYYY-MM-DD')] = '13:00';
+            }
+
+            // LSE Holidays
+            lseConfig.holidays = [
+                observeDate(moment([year, 0, 1])), // New Year's
+                goodFriday,
+                easterMonday,
+                getNthWeekday(year, 5, 1, 1), // Early May
+                getLastWeekday(year, 5, 1), // Spring
+                getLastWeekday(year, 8, 1), // Summer
+                observeDate(moment([year, 11, 25])), // Christmas
+                observeDate(moment([year, 11, 26])) // Boxing
+            ];
+
+            const newYearsEve = moment([year, 11, 31]);
+            if (!isWeekend(newYearsEve)) {
+                lseConfig.earlyCloses[newYearsEve.format('YYYY-MM-DD')] = '12:30';
+            }
+
+            if (!isWeekend(christmasEve)) {
+                lseConfig.earlyCloses[christmasEve.format('YYYY-MM-DD')] = '12:30';
+            }
+        }
+
         async function updateRates() {
             try {
                 const res = await fetch('https://open.er-api.com/v6/latest/USD');
@@ -185,11 +287,17 @@
             updateTimer(lseConfig, 'lse-countdown');
         }
 
-        updateTimers();
-        setInterval(updateTimers, 1000);
+        function init() {
+            const year = moment().year();
+            calculateHolidays(year);
+            updateRates();
+            updateTimers();
+        }
 
-        updateRates();
+        init();
+        setInterval(updateTimers, 1000);
         setInterval(updateRates, 3600000); // every 1 hour
+        setInterval(() => calculateHolidays(moment().year()), 86400000); // every 24 hours
     </script>
 </body>
 </html>
