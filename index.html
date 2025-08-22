@@ -1,0 +1,233 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Pulse</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
+    <script src="https://momentjs.com/downloads/moment.js"></script>
+    <script src="https://momentjs.com/downloads/moment-timezone-with-data.js"></script>
+    <style>
+        body {
+            background-color: #02070d;
+            font-family: 'Roboto Mono', monospace;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        table {
+            width: 100%;
+            max-width: 100vw;
+            border-collapse: collapse;
+            font-size: clamp(2rem, 5vw, 3rem);
+            color: #fff;
+        }
+        td {
+            padding: 8px;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .closed { color: yellow; }
+        .open { color: limegreen; }
+    </style>
+</head>
+<body>
+    <table>
+        <tr>
+            <td>NYSE</td>
+            <td id="nyse-countdown"></td>
+        </tr>
+        <tr>
+            <td>LSE</td>
+            <td id="lse-countdown"></td>
+        </tr>
+        <tr>
+            <td>USD.HKD</td>
+            <td id="usdhkd"></td>
+        </tr>
+        <tr>
+            <td>USD 1D</td>
+            <td id="effr"></td>
+        </tr>
+        <tr>
+            <td>HKD 1D</td>
+            <td id="hkd_on"></td>
+        </tr>
+        <tr>
+            <td>HKD 1M</td>
+            <td id="hkd_1m"></td>
+        </tr>
+    </table>
+
+    <script>
+        const nyseConfig = {
+            tz: 'America/New_York',
+            openTime: '09:30',
+            closeTime: '16:00',
+            holidays: ['2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18', '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01', '2025-11-27', '2025-12-25'],
+            earlyCloses: { '2025-07-03': '13:00', '2025-11-28': '13:00', '2025-12-24': '13:00' }
+        };
+
+        const lseConfig = {
+            tz: 'Europe/London',
+            openTime: '08:00',
+            closeTime: '16:30',
+            holidays: ['2025-01-01', '2025-04-18', '2025-04-21', '2025-05-05', '2025-05-26', '2025-08-25', '2025-12-25', '2025-12-26'],
+            earlyCloses: { '2025-12-24': '12:30', '2025-12-31': '12:30' }
+        };
+
+        function isHoliday(date, holidays) {
+            return holidays.includes(date.format('YYYY-MM-DD'));
+        }
+
+        function isWeekend(date) {
+            return date.isoWeekday() > 5;
+        }
+
+        function getCloseTime(date, earlyCloses, closeTime) {
+            const dateStr = date.format('YYYY-MM-DD');
+            return earlyCloses[dateStr] || closeTime;
+        }
+
+        function getNextTradingDay(current, config) {
+            let next = current.clone().add(1, 'day');
+            while (isWeekend(next) || isHoliday(next, config.holidays)) {
+                next.add(1, 'day');
+            }
+            return next;
+        }
+
+        function formatDuration(diff) {
+            const duration = moment.duration(diff);
+            const hours = Math.floor(duration.asHours()).toString().padStart(2, '0');
+            const minutes = duration.minutes().toString().padStart(2, '0');
+            const seconds = duration.seconds().toString().padStart(2, '0');
+            return `${hours}:${minutes}:${seconds}`;
+        }
+
+        function updateTimer(config, countdownId) {
+            const now = moment.tz(config.tz);
+            const isTodayHoliday = isHoliday(now, config.holidays);
+            const isTodayWeekend = isWeekend(now);
+
+            if (isTodayHoliday || isTodayWeekend) {
+                const nextOpen = getNextTradingDay(now, config);
+                const openMoment = nextOpen.clone().set({ hour: config.openTime.split(':')[0], minute: config.openTime.split(':')[1], second: 0 });
+                const diff = openMoment.diff(now);
+                document.getElementById(countdownId).className = 'closed';
+                document.getElementById(countdownId).textContent = formatDuration(diff);
+                return;
+            }
+
+            const openMoment = now.clone().set({ hour: config.openTime.split(':')[0], minute: config.openTime.split(':')[1], second: 0 });
+            const closeTime = getCloseTime(now, config.earlyCloses, config.closeTime);
+            const closeMoment = now.clone().set({ hour: closeTime.split(':')[0], minute: closeTime.split(':')[1], second: 0 });
+
+            if (now.isBefore(openMoment)) {
+                const diff = openMoment.diff(now);
+                document.getElementById(countdownId).className = 'closed';
+                document.getElementById(countdownId).textContent = formatDuration(diff);
+            } else if (now.isBefore(closeMoment)) {
+                const diff = closeMoment.diff(now);
+                document.getElementById(countdownId).className = 'open';
+                document.getElementById(countdownId).textContent = formatDuration(diff);
+            } else {
+                const nextOpen = getNextTradingDay(now, config);
+                const openMomentNext = nextOpen.clone().set({ hour: config.openTime.split(':')[0], minute: config.openTime.split(':')[1], second: 0 });
+                const diff = openMomentNext.diff(now);
+                document.getElementById(countdownId).className = 'closed';
+                document.getElementById(countdownId).textContent = formatDuration(diff);
+            }
+        }
+
+        function updateRates() {
+            fetch('https://api.exchangerate-api.com/v4/latest/USD')
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('usdhkd').textContent = data.rates.HKD.toFixed(4);
+                })
+                .catch(() => { document.getElementById('usdhkd').textContent = 'N/A'; });
+
+            fetch('https://markets.newyorkfed.org/api/rates/all/latest.xml')
+                .then(res => res.text())
+                .then(xmlText => {
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(xmlText, 'text/xml');
+                    const rates = xml.getElementsByTagName('rate');
+                    for (let rate of rates) {
+                        if (rate.getElementsByTagName('type')[0].textContent === 'EFFR') {
+                            const percentRate = parseFloat(rate.getElementsByTagName('percentRate')[0].textContent).toFixed(2);
+                            document.getElementById('effr').textContent = percentRate + '%';
+                            break;
+                        }
+                    }
+                })
+                .catch(() => { document.getElementById('effr').textContent = 'N/A'; });
+
+            fetch('https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/er-ir/hk-interbank-ir-daily?segment=hibor.fixing&pagesize=1&sortby=end_of_day&sortorder=desc')
+                .then(res => res.json())
+                .then(data => {
+                    const latest = data.result.records[0];
+                    document.getElementById('hkd_on').textContent = parseFloat(latest.ir_overnight).toFixed(2) + '%';
+                    document.getElementById('hkd_1m').textContent = parseFloat(latest.ir_1m).toFixed(2) + '%';
+                })
+                .catch(() => {
+                    document.getElementById('hkd_on').textContent = 'N/A';
+                    document.getElementById('hkd_1m').textContent = 'N/A';
+                });
+        }
+
+        function updateTimers() {
+            updateTimer(nyseConfig, 'nyse-countdown');
+            updateTimer(lseConfig, 'lse-countdown');
+        }
+
+        updateTimers();
+        setInterval(updateTimers, 1000);
+
+        updateRates();
+        setInterval(updateRates, 300000); // every 5 minutes
+    </script>
+</body>
+</html>
